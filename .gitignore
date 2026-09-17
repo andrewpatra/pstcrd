@@ -1,0 +1,17 @@
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# Supabase local development
+.supabase/
+supabase/.branches/
+supabase/.temp/
+
+# OS / editor files
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log

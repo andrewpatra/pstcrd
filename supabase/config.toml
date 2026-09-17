@@ -1,0 +1,7 @@
+project_id = "YOUR_PROJECT_ID"
+
+[functions.send-message]
+verify_jwt = false
+
+[functions.consent]
+verify_jwt = false

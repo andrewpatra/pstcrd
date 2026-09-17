@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Message Test</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; }
+    label { display:block; margin: 18px 0 6px; }
+    input, textarea, button { width:100%; box-sizing:border-box; padding:12px; font:inherit; }
+    textarea { min-height:140px; }
+    button { margin-top:20px; cursor:pointer; }
+    #status { margin-top:20px; padding:12px; background:#eee; min-height:24px; }
+  </style>
+</head>
+<body>
+  <h1>Send a Message</h1>
+  <p>Low-fidelity test version. Video is intentionally disabled for now.</p>
+
+  <form id="message-form">
+    <label for="sender-name">Your name</label>
+    <input id="sender-name" name="senderName" required maxlength="100">
+
+    <label for="recipient-email">Recipient email</label>
+    <input id="recipient-email" name="recipientEmail" type="email" required maxlength="254">
+
+    <label for="message">Message</label>
+    <textarea id="message" name="message" required maxlength="2000"></textarea>
+
+    <button type="submit">Send</button>
+  </form>
+
+  <div id="status" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./config.js"></script>
+  <script>
+    // Replace these with your Supabase project values.
+    const SUPABASE_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://YOUR_PROJECT_ID.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = window.APP_CONFIG?.SUPABASE_PUBLISHABLE_KEY || 'YOUR_PUBLISHABLE_KEY';
+
+    const supabase = window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_PUBLISHABLE_KEY
+    );
+
+    const form = document.getElementById('message-form');
+    const status = document.getElementById('status');
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      status.textContent = 'Sending...';
+
+      const payload = {
+        senderName: document.getElementById('sender-name').value.trim(),
+        recipientEmail: document.getElementById('recipient-email').value.trim(),
+        message: document.getElementById('message').value.trim()
+      };
+
+      const { data, error } = await supabase.functions.invoke('send-message', {
+        body: payload
+      });
+
+      if (error) {
+        console.error(error);
+        status.textContent = 'Something went wrong. Check the browser console and Supabase function logs.';
+        return;
+      }
+
+      status.textContent = data?.message || 'Request submitted.';
+      form.reset();
+    });
+  </script>
+</body>
+</html>

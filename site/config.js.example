@@ -1,0 +1,6 @@
+// Copy this file to site/config.js for local testing.
+// Never put a Supabase service-role key here.
+window.APP_CONFIG = {
+  SUPABASE_URL: 'https://YOUR_PROJECT_ID.supabase.co',
+  SUPABASE_PUBLISHABLE_KEY: 'YOUR_PUBLISHABLE_KEY'
+};
