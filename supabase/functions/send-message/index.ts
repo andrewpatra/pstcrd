@@ -36,9 +36,9 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const resendApiKey = Deno.env.get("RESEND_API_KEY")!;
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
     const appBaseUrl = Deno.env.get("APP_BASE_URL")!;
-    const emailFrom = Deno.env.get("EMAIL_FROM")!;
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL");
 
     const dbHeaders = {
       apikey: serviceRoleKey,
@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
           Authorization: `Bearer ${resendApiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ from: emailFrom, to: [to], subject, html }),
+        body: JSON.stringify({ from: fromEmail, to: [to], subject, html }),
       });
       if (!response.ok) throw new Error(`Email send failed: ${await response.text()}`);
       return response.json();
