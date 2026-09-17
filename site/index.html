@@ -40,7 +40,7 @@
     const SUPABASE_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://dvflrnxilkiuiyfjzocq.supabase.co';
     const SUPABASE_PUBLISHABLE_KEY = window.APP_CONFIG?.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_E7RixObilJ3MYXcH3rTJMw_dZccfbkR';
 
-    const supabase = window.supabase.createClient(
+    const supabaseClient = window.supabase.createClient(
       SUPABASE_URL,
       SUPABASE_PUBLISHABLE_KEY
     );
@@ -58,7 +58,7 @@
         message: document.getElementById('message').value.trim()
       };
 
-      const { data, error } = await supabase.functions.invoke('send-message', {
+      const { data, error } = await supabaseClient.functions.invoke('send-message', {
         body: payload
       });
 

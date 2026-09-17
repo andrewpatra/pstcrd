@@ -21,7 +21,7 @@
   <script>
     const SUPABASE_URL = window.APP_CONFIG?.SUPABASE_URL || 'https://YOUR_PROJECT_ID.supabase.co';
     const SUPABASE_PUBLISHABLE_KEY = window.APP_CONFIG?.SUPABASE_PUBLISHABLE_KEY || 'YOUR_PUBLISHABLE_KEY';
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
     const params = new URLSearchParams(location.search);
     const token = params.get('token');
     const action = params.get('action');
@@ -42,7 +42,7 @@
       button.onclick = async () => {
         button.disabled = true;
         status.textContent = 'Processing...';
-        const { data, error } = await supabase.functions.invoke('consent', { body: { token, action } });
+        const { data, error } = await supabaseClient.functions.invoke('consent', { body: { token, action } });
         if (error) {
           console.error(error);
           status.textContent = 'Something went wrong.';

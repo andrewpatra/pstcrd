@@ -44,7 +44,7 @@ Create a Resend account and API key. Configure an allowed sender address/domain 
 
 In Supabase, set these Edge Function secrets:
 
-RESEND_API_KEY=re_... SUPABASE_SERVICE_ROLE_KEY=... APP_BASE_URL=https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY_NAME EMAIL_FROM=Video Message Test <your-sender@example.com>
+RESEND_API_KEY=re_... SUPABASE_SERVICE_ROLE_KEY=... APP_BASE_URL=https://pstcrd.art RESEND_FROM_EMAIL=Video Message Test <your-sender@example.com>
 
 Do not put either secret key in the GitHub repository or in the HTML.
 
