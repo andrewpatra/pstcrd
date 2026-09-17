@@ -20,7 +20,7 @@ Create a Supabase project.
 
 In the SQL Editor, paste and run:
 
-    supabase/schema.sql
+supabase/schema.sql
 
 The tables have Row Level Security enabled with no anonymous table policies. The browser calls Edge Functions instead of writing to the tables directly.
 
@@ -28,15 +28,11 @@ The tables have Row Level Security enabled with no anonymous table policies. The
 
 The repository contains:
 
-    supabase/functions/send-message/index.ts
-    supabase/functions/consent/index.ts
+supabase/functions/send-message/index.ts supabase/functions/consent/index.ts
 
 The easiest first test is to deploy them with the Supabase CLI. From the repository root:
 
-    supabase login
-    supabase link --project-ref YOUR_PROJECT_ID
-    supabase functions deploy send-message --no-verify-jwt
-    supabase functions deploy consent --no-verify-jwt
+supabase login supabase link --project-ref dvflrnxilkiuiyfjzocq supabase functions deploy send-message --no-verify-jwt supabase functions deploy consent --no-verify-jwt
 
 The included `supabase/config.toml` also documents the intended `verify_jwt = false` setting for these two functions.
 
@@ -48,10 +44,7 @@ Create a Resend account and API key. Configure an allowed sender address/domain 
 
 In Supabase, set these Edge Function secrets:
 
-    RESEND_API_KEY=re_...
-    SUPABASE_SERVICE_ROLE_KEY=...
-    APP_BASE_URL=https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY_NAME
-    EMAIL_FROM=Video Message Test <your-sender@example.com>
+RESEND_API_KEY=re_... SUPABASE_SERVICE_ROLE_KEY=... APP_BASE_URL=https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPOSITORY_NAME EMAIL_FROM=Video Message Test <your-sender@example.com>
 
 Do not put either secret key in the GitHub repository or in the HTML.
 
@@ -61,12 +54,11 @@ Do not put either secret key in the GitHub repository or in the HTML.
 
 Edit:
 
-    site/config.js
+site/config.js
 
 Set:
 
-    SUPABASE_URL
-    SUPABASE_PUBLISHABLE_KEY
+SUPABASE_URL SUPABASE_PUBLISHABLE_KEY
 
 Only use the Supabase publishable/anon key in browser code. Never use the service-role key.
 
@@ -75,12 +67,19 @@ Commit and push the change. GitHub Pages will redeploy automatically.
 ## 8. Test the workflow
 
 1. Open the GitHub Pages URL on a phone or desktop.
+
 2. Enter your own email address as the recipient.
+
 3. Submit a text message.
+
 4. Confirm that the consent request arrives.
+
 5. Click **Accept this message**.
+
 6. Confirm that the second email containing the text arrives.
+
 7. Submit another message to the same address; it should be delivered without a second consent request.
+
 8. Test **Decline** and **Stop future requests** with another test address.
 
 ## Next phase
