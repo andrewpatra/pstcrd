@@ -25,14 +25,6 @@
   <p>Low-fidelity video test. Record a maximum 10-second, low-resolution postcard.</p>
 
   <form id="message-form">
-    <label for="sender-name">Your name</label>
-    <input id="sender-name" name="senderName" required maxlength="100">
-
-    <label for="recipient-email">Recipient email</label>
-    <input id="recipient-email" name="recipientEmail" type="email" required maxlength="254">
-
-    <label for="message">Message</label>
-    <textarea id="message" name="message" required maxlength="2000"></textarea>
 
     <section id="camera-panel">
       <h2>Video postcard</h2>
@@ -44,6 +36,15 @@
       <p id="timer" aria-live="polite">Maximum recording: 10 seconds</p>
       <p id="video-note">This first test records locally in your browser only. It does not upload the video yet.</p>
     </section>
+
+    <label for="sender-name">Your name</label>
+    <input id="sender-name" name="senderName" required maxlength="100">
+
+    <label for="recipient-email">Recipient email</label>
+    <input id="recipient-email" name="recipientEmail" type="email" required maxlength="254">
+
+    <label for="message">Message</label>
+    <textarea id="message" name="message" required maxlength="2000"></textarea>
 
     <button type="submit">Send text test</button>
   </form>
@@ -89,8 +90,7 @@
       const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type));
       return {
         ...(mimeType ? { mimeType } : {}),
-        videoBitsPerSecond: 750_000,
-        audioBitsPerSecond: 64_000
+        videoBitsPerSecond: 750_000
       };
     }
 
@@ -100,9 +100,9 @@
         video: {
           width: { ideal: 640, max: 640 },
           height: { ideal: 480, max: 480 },
-          facingMode: 'user'
+          facingMode: 'environment'
         },
-        audio: true
+        audio: false
       });
       videoPreview.srcObject = cameraStream;
       videoPreview.muted = true;
