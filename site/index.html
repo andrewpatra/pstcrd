@@ -10,12 +10,19 @@
     input, textarea, button { width:100%; box-sizing:border-box; padding:12px; font:inherit; }
     textarea { min-height:140px; }
     button { margin-top:20px; cursor:pointer; }
+    button:disabled { cursor:not-allowed; opacity:.55; }
+    #camera-panel { margin-top:24px; }
+    video { width:100%; background:#111; aspect-ratio:4/3; object-fit:cover; }
+    #recording-controls { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    #recording-controls button { margin-top:12px; }
+    #timer { margin:10px 0 0; font-variant-numeric:tabular-nums; }
+    #video-note { margin-top:8px; }
     #status { margin-top:20px; padding:12px; background:#eee; min-height:24px; }
   </style>
 </head>
 <body>
   <h1>Send a Message</h1>
-  <p>Low-fidelity test version. Video is intentionally disabled for now.</p>
+  <p>Low-fidelity video test. Record a maximum 10-second, low-resolution postcard.</p>
 
   <form id="message-form">
     <label for="sender-name">Your name</label>
@@ -27,7 +34,18 @@
     <label for="message">Message</label>
     <textarea id="message" name="message" required maxlength="2000"></textarea>
 
-    <button type="submit">Send</button>
+    <section id="camera-panel">
+      <h2>Video postcard</h2>
+      <video id="video-preview" playsinline muted></video>
+      <div id="recording-controls">
+        <button id="record-button" type="button">Start recording</button>
+        <button id="retake-button" type="button" disabled>Retake</button>
+      </div>
+      <p id="timer" aria-live="polite">Maximum recording: 10 seconds</p>
+      <p id="video-note">This first test records locally in your browser only. It does not upload the video yet.</p>
+    </section>
+
+    <button type="submit">Send text test</button>
   </form>
 
   <div id="status" aria-live="polite"></div>
@@ -47,6 +65,120 @@
 
     const form = document.getElementById('message-form');
     const status = document.getElementById('status');
+    const videoPreview = document.getElementById('video-preview');
+    const recordButton = document.getElementById('record-button');
+    const retakeButton = document.getElementById('retake-button');
+    const timer = document.getElementById('timer');
+
+    const MAX_RECORDING_MS = 10_000;
+    let cameraStream = null;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let recordedBlob = null;
+    let stopTimeout = null;
+    let timerInterval = null;
+    let recordingStartedAt = 0;
+
+    function preferredRecorderOptions() {
+      const candidates = [
+        'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=vp9,opus',
+        'video/webm',
+        'video/mp4'
+      ];
+      const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type));
+      return {
+        ...(mimeType ? { mimeType } : {}),
+        videoBitsPerSecond: 750_000,
+        audioBitsPerSecond: 64_000
+      };
+    }
+
+    async function getCamera() {
+      if (cameraStream) return cameraStream;
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 640, max: 640 },
+          height: { ideal: 480, max: 480 },
+          facingMode: 'user'
+        },
+        audio: true
+      });
+      videoPreview.srcObject = cameraStream;
+      videoPreview.muted = true;
+      videoPreview.controls = false;
+      await videoPreview.play();
+      return cameraStream;
+    }
+
+    function updateTimer() {
+      const elapsed = Date.now() - recordingStartedAt;
+      const remaining = Math.max(0, MAX_RECORDING_MS - elapsed);
+      timer.textContent = `Recording: ${(remaining / 1000).toFixed(1)} seconds remaining`;
+    }
+
+    function stopRecording() {
+      if (mediaRecorder?.state === 'recording') mediaRecorder.stop();
+    }
+
+    recordButton.addEventListener('click', async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+          throw new Error('This browser does not support in-browser video recording.');
+        }
+
+        const stream = await getCamera();
+        recordedChunks = [];
+        recordedBlob = null;
+        mediaRecorder = new MediaRecorder(stream, preferredRecorderOptions());
+
+        mediaRecorder.addEventListener('dataavailable', event => {
+          if (event.data.size > 0) recordedChunks.push(event.data);
+        });
+
+        mediaRecorder.addEventListener('stop', () => {
+          clearTimeout(stopTimeout);
+          clearInterval(timerInterval);
+          recordedBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
+          videoPreview.pause();
+          videoPreview.srcObject = null;
+          videoPreview.src = URL.createObjectURL(recordedBlob);
+          videoPreview.muted = false;
+          videoPreview.controls = true;
+          videoPreview.loop = true;
+          videoPreview.play().catch(() => {});
+          recordButton.disabled = true;
+          retakeButton.disabled = false;
+          timer.textContent = `Recorded ${(recordedBlob.size / 1024 / 1024).toFixed(2)} MB. Maximum length: 10 seconds.`;
+        });
+
+        mediaRecorder.start(250);
+        recordingStartedAt = Date.now();
+        recordButton.textContent = 'Stop recording';
+        recordButton.onclick = stopRecording;
+        retakeButton.disabled = true;
+        updateTimer();
+        timerInterval = setInterval(updateTimer, 100);
+        stopTimeout = setTimeout(stopRecording, MAX_RECORDING_MS);
+      } catch (error) {
+        console.error(error);
+        status.textContent = `Camera error: ${error.message}`;
+      }
+    }, { once: true });
+
+    retakeButton.addEventListener('click', () => {
+      if (videoPreview.src) URL.revokeObjectURL(videoPreview.src);
+      videoPreview.removeAttribute('src');
+      recordedBlob = null;
+      recordedChunks = [];
+      retakeButton.disabled = true;
+      recordButton.disabled = false;
+      recordButton.textContent = 'Start recording';
+      timer.textContent = 'Maximum recording: 10 seconds';
+      cameraStream?.getTracks().forEach(track => track.stop());
+      cameraStream = null;
+      location.reload();
+    });
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
