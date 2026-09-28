@@ -1,5 +1,8 @@
 project_id = "dvflrnxilkiuiyfjzocq"
 
+[functions.prepare-upload]
+verify_jwt = false
+
 [functions.send-message]
 verify_jwt = false
 

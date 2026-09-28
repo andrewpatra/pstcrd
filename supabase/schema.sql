@@ -1,5 +1,4 @@
--- First-pass database for the consent workflow.
--- Run this in Supabase SQL Editor.
+-- PSTCRD database and private GIF storage for the video postcard prototype.
 
 create extension if not exists pgcrypto;
 
@@ -17,7 +16,10 @@ create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
   recipient_id uuid not null references public.recipients(id) on delete cascade,
   sender_name text not null,
-  message_text text not null,
+  message_text text not null default '',
+  gif_path text,
+  gif_mime_type text,
+  gif_size_bytes bigint,
   status text not null default 'pending_consent'
     check (status in ('pending_consent', 'sent', 'declined', 'expired')),
   created_at timestamptz not null default now(),
@@ -39,7 +41,14 @@ create table if not exists public.consent_tokens (
 create index if not exists messages_recipient_id_idx on public.messages(recipient_id);
 create index if not exists consent_tokens_token_idx on public.consent_tokens(token);
 
--- Do not expose these tables directly to anonymous browsers in this prototype.
 alter table public.recipients enable row level security;
 alter table public.messages enable row level security;
 alter table public.consent_tokens enable row level security;
+
+-- Private storage bucket for GIF postcards.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('postcards', 'postcards', false, 3000000, array['image/gif'])
+on conflict (id) do update
+set public = false,
+    file_size_limit = 3000000,
+    allowed_mime_types = array['image/gif'];
