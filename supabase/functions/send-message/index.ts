@@ -1,159 +1,40 @@
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { createClient } from "npm:@supabase/supabase-js@2";
+const corsHeaders={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type","Access-Control-Allow-Methods":"POST, OPTIONS"};
+const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...corsHeaders,"Content-Type":"application/json"}});
+const escapeHtml=(v:string)=>v.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-
-const escapeHtml = (value: string) =>
-  value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-
-const toBase64 = (bytes: Uint8Array) => {
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+Deno.serve(async req=>{
+ if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});
+ if(req.method!=="POST")return json({error:"Method not allowed"},405);
+ try{
+  const {messageId}=await req.json(); if(!messageId)return json({error:"Missing message ID"},400);
+  const url=Deno.env.get("SUPABASE_URL"),key=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),resend=Deno.env.get("RESEND_API_KEY"),base=Deno.env.get("APP_BASE_URL"),from=Deno.env.get("RESEND_FROM_EMAIL");
+  if(!url||!key||!resend||!base||!from)throw new Error("Server configuration is incomplete");
+  const admin=createClient(url,key);
+  const {data:msg,error:mErr}=await admin.from("messages").select("*, recipients(*)").eq("id",messageId).maybeSingle(); if(mErr)throw mErr;
+  if(!msg)return json({error:"Message not found"},404); if(msg.status!=="uploading")return json({error:"Message is not ready to send"},400);
+  if(!msg.video_path||!msg.poster_path)return json({error:"Postcard assets are missing"},400); const recipient=msg.recipients; if(!recipient)return json({error:"Recipient not found"},400);
+  const exists=async(path:string,folder:string)=>{const name=path.split("/").pop(); const {data,error}=await admin.storage.from("videos").list(folder,{limit:1000,search:name}); if(error)throw error; return !!data?.some(x=>x.name===name);};
+  let ve=false,pe=false; for(let i=0;i<5&&(!ve||!pe);i++){ve=ve||await exists(msg.video_path,"messages");pe=pe||await exists(msg.poster_path,"posters");if(!ve||!pe)await sleep(200);}
+  if(!ve||!pe)return json({error:"Postcard upload was not found"},400);
+  const sendEmail=async(to:string,subject:string,html:string)=>{const r=await fetch("https://api.resend.com/emails",{method:"POST",headers:{Authorization:`Bearer ${resend}`,"Content-Type":"application/json"},body:JSON.stringify({from,to:[to],subject,html})});if(!r.ok)throw new Error(`Email send failed: ${await r.text()}`);return r.json();};
+  const videoType=escapeHtml(msg.video_mime_type||"video/mp4"),sender=escapeHtml(msg.sender_name),text=escapeHtml(msg.message_text||"").replaceAll("\n","<br>");
+  const videoEmail=async()=>{
+    const {data:v,error:ve2}=await admin.storage.from("videos").createSignedUrl(msg.video_path,60*60*24*3); if(ve2)throw ve2;
+    const {data:p,error:pe2}=await admin.storage.from("videos").createSignedUrl(msg.poster_path,60*60*24*3); if(pe2)throw pe2;
+    const videoUrl=escapeHtml(v.signedUrl),posterUrl=escapeHtml(p.signedUrl);
+    return `<div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto"><p><strong>${sender}</strong> sent you a PSTCRD.</p><p>${text}</p><video controls playsinline preload="metadata" poster="${posterUrl}" width="640" style="display:block;width:100%;max-width:640px;height:auto;background:#111"><source src="${videoUrl}" type="${videoType}"><p>Your email app does not support inline video. <a href="${videoUrl}">Watch your postcard</a>.</p></video><p style="margin:16px 0 6px">If the video does not play above:</p><p><a href="${videoUrl}"><img src="${posterUrl}" alt="Video postcard. Click to watch." width="640" style="display:block;width:100%;max-width:640px;height:auto;border:0"></a></p><p><a href="${videoUrl}">Watch your postcard</a></p><p style="font-size:13px;color:#666">The video link is available for 3 days.</p></div>`;
+  };
+  if(recipient.consent_status==="approved"){
+    await sendEmail(recipient.email,`Postcard from ${msg.sender_name}`,await videoEmail());
+    const {error:uErr}=await admin.from("messages").update({status:"sent",sent_at:new Date().toISOString()}).eq("id",msg.id);if(uErr)throw uErr;
+    return json({message:"Postcard sent."});
   }
-  return btoa(binary);
-};
-
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
-
-  try {
-    const { senderName, recipientEmail, message, gifPath, gifSizeBytes } = await req.json();
-    const sender = String(senderName ?? "").trim();
-    const email = String(recipientEmail ?? "").trim().toLowerCase();
-    const text = String(message ?? "").trim();
-    const path = String(gifPath ?? "").trim();
-    const sizeBytes = Number(gifSizeBytes);
-
-    if (!sender || sender.length > 100) return json({ error: "Invalid sender name" }, 400);
-    if (!email || email.length > 254 || !/^\S+@\S+\.\S+$/.test(email)) return json({ error: "Invalid recipient email" }, 400);
-    if (text.length > 2000) return json({ error: "Message is too long" }, 400);
-    if (!/^incoming\/[0-9a-f-]+\.gif$/i.test(path)) return json({ error: "Invalid GIF path" }, 400);
-    if (!Number.isInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > 3_000_000) return json({ error: "Invalid GIF size" }, 400);
-
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const resendApiKey = Deno.env.get("RESEND_API_KEY")!;
-    const appBaseUrl = Deno.env.get("APP_BASE_URL")!;
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL")!;
-
-    const dbHeaders = {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
-      "Content-Type": "application/json",
-    };
-
-    // Confirm the uploaded object exists before recording the message.
-    const objectCheck = await fetch(`${supabaseUrl}/storage/v1/object/info/postcards/${encodeURIComponent(path)}`, {
-      headers: dbHeaders,
-    });
-    if (!objectCheck.ok) return json({ error: "Uploaded GIF was not found" }, 400);
-
-    const lookup = await fetch(
-      `${supabaseUrl}/rest/v1/recipients?email=eq.${encodeURIComponent(email)}&select=*`,
-      { headers: dbHeaders },
-    );
-    if (!lookup.ok) throw new Error(`Recipient lookup failed: ${await lookup.text()}`);
-    const rows = await lookup.json();
-
-    let recipient: any;
-    if (rows.length) recipient = rows[0];
-    else {
-      const createRecipient = await fetch(`${supabaseUrl}/rest/v1/recipients`, {
-        method: "POST",
-        headers: { ...dbHeaders, Prefer: "return=representation" },
-        body: JSON.stringify({ email }),
-      });
-      if (!createRecipient.ok) throw new Error(`Recipient creation failed: ${await createRecipient.text()}`);
-      recipient = (await createRecipient.json())[0];
-    }
-
-    const createMessage = await fetch(`${supabaseUrl}/rest/v1/messages`, {
-      method: "POST",
-      headers: { ...dbHeaders, Prefer: "return=representation" },
-      body: JSON.stringify({
-        recipient_id: recipient.id,
-        sender_name: sender,
-        message_text: text,
-        gif_path: path,
-        gif_mime_type: "image/gif",
-        gif_size_bytes: sizeBytes,
-        status: recipient.consent_status === "approved" ? "pending_consent" : "pending_consent",
-      }),
-    });
-    if (!createMessage.ok) throw new Error(`Message creation failed: ${await createMessage.text()}`);
-    const messageRow = (await createMessage.json())[0];
-
-    const sendEmail = async (to: string, subject: string, html: string, attachments?: unknown[]) => {
-      const response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ from: fromEmail, to: [to], subject, html, ...(attachments ? { attachments } : {}) }),
-      });
-      if (!response.ok) throw new Error(`Email send failed: ${await response.text()}`);
-      return response.json();
-    };
-
-    const sendGifEmail = async () => {
-      const fileResponse = await fetch(`${supabaseUrl}/storage/v1/object/postcards/${encodeURIComponent(path)}`, {
-        headers: dbHeaders,
-      });
-      if (!fileResponse.ok) throw new Error(`GIF download failed: ${await fileResponse.text()}`);
-      const bytes = new Uint8Array(await fileResponse.arrayBuffer());
-      const content = toBase64(bytes);
-      return sendEmail(
-        email,
-        `Postcard from ${sender}`,
-        `<p><strong>${escapeHtml(sender)}</strong> sent you a PSTCRD.</p>${text ? `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>` : ""}<p><img src="cid:pstcrd-gif" alt="Animated postcard" style="display:block;max-width:100%;height:auto;"></p><p>— PSTCRD</p>`,
-        [{ content, filename: "pstcrd.gif", content_id: "pstcrd-gif", content_type: "image/gif" }],
-      );
-    };
-
-    if (recipient.consent_status === "approved") {
-      await sendGifEmail();
-      await fetch(`${supabaseUrl}/rest/v1/messages?id=eq.${messageRow.id}`, {
-        method: "PATCH",
-        headers: dbHeaders,
-        body: JSON.stringify({ status: "sent", sent_at: new Date().toISOString() }),
-      });
-      return json({ message: "Postcard sent." });
-    }
-
-    const tokenResponse = await fetch(`${supabaseUrl}/rest/v1/consent_tokens`, {
-      method: "POST",
-      headers: { ...dbHeaders, Prefer: "return=representation" },
-      body: JSON.stringify({ recipient_id: recipient.id, message_id: messageRow.id, action: "accept" }),
-    });
-    if (!tokenResponse.ok) throw new Error(`Consent token creation failed: ${await tokenResponse.text()}`);
-    const acceptToken = (await tokenResponse.json())[0].token;
-    const acceptUrl = `${appBaseUrl}/consent.html?token=${encodeURIComponent(acceptToken)}&action=accept`;
-
-    await sendEmail(
-      email,
-      `${sender} wants to send you a postcard`,
-      `<p><strong>${escapeHtml(sender)}</strong> would like to send you a PSTCRD postcard.</p><p>You will only receive it if you accept.</p><p><a href="${acceptUrl}">Accept this postcard</a></p><p>You can decline this request or stop future requests from the consent page.</p>`,
-    );
-
-    return json({ message: "The recipient has been sent a consent request." });
-  } catch (error) {
-    console.error(error);
-    return json({ error: "Server error" }, 500);
-  }
+  const tokens:Record<string,string>={}; for(const action of ["accept","decline","unsubscribe"] as const){const {data:t,error:e}=await admin.from("consent_tokens").insert({recipient_id:recipient.id,message_id:msg.id,action}).select("token").single();if(e)throw e;tokens[action]=t.token;}
+  const accept=`${base}/consent.html?token=${encodeURIComponent(tokens.accept)}&action=accept`,decline=`${base}/consent.html?token=${encodeURIComponent(tokens.decline)}&action=decline`,unsubscribe=`${base}/consent.html?token=${encodeURIComponent(tokens.unsubscribe)}&action=unsubscribe`;
+  await sendEmail(recipient.email,`${msg.sender_name} wants to send you a postcard`, `<div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto"><p><strong>${sender}</strong> would like to send you a video postcard through PSTCRD.</p><p>You will only receive the postcard if you accept.</p><p><a href="${escapeHtml(accept)}">Accept this postcard</a></p><p><a href="${escapeHtml(decline)}">Decline this postcard</a></p><p><a href="${escapeHtml(unsubscribe)}">Stop future requests</a></p></div>`);
+  const {error:uErr}=await admin.from("messages").update({status:"pending_consent"}).eq("id",msg.id);if(uErr)throw uErr;
+  return json({message:"The recipient has been sent a consent request."});
+ }catch(error){console.error(error);return json({error:error instanceof Error?error.message:"Server error"},500);}
 });

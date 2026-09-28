@@ -1,10 +1,10 @@
 project_id = "dvflrnxilkiuiyfjzocq"
 
-[functions.prepare-upload]
-verify_jwt = false
-
 [functions.send-message]
 verify_jwt = false
 
 [functions.consent]
+verify_jwt = false
+
+[functions.prepare-message]
 verify_jwt = false

@@ -12,29 +12,27 @@
     button { margin-top:12px; cursor:pointer; }
     button:disabled { cursor:not-allowed; opacity:.55; }
     #camera-panel { margin-top:24px; }
-    video, #gif-preview { width:100%; background:#111; aspect-ratio:4/3; object-fit:cover; }
+    video { width:100%; background:#111; aspect-ratio:4/3; object-fit:cover; }
     #recording-controls { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
     #recording-controls button { margin-top:12px; }
-    #timer, #gif-note { margin:10px 0 0; }
+    #timer, #video-note { margin:10px 0 0; }
     #status { margin-top:20px; padding:12px; background:#eee; min-height:24px; }
-    .hidden { display:none; }
   </style>
 </head>
 <body>
   <h1>PSTCRD</h1>
-  <p>Record a maximum 5-second postcard. This test converts the recording to an animated GIF before sending.</p>
+  <p>Record a maximum 5-second postcard. The video is sent by email with an HTML5 video player and a fallback link.</p>
 
   <form id="message-form">
     <section id="camera-panel">
       <h2>Video postcard</h2>
       <video id="video-preview" playsinline muted></video>
-      <img id="gif-preview" class="hidden" alt="Animated postcard preview">
       <div id="recording-controls">
         <button id="record-button" type="button">Start recording</button>
         <button id="retake-button" type="button" disabled>Retake</button>
       </div>
       <p id="timer" aria-live="polite">Maximum recording: 5 seconds</p>
-      <p id="gif-note">GIF target: 320×240, 8 frames/second, no audio.</p>
+      <p id="video-note">5-second maximum, 640×480 target, no audio.</p>
     </section>
 
     <label for="sender-name">Your name</label>
@@ -44,7 +42,7 @@
     <input id="recipient-email" name="recipientEmail" type="email" required maxlength="254">
 
     <label for="message">Message</label>
-    <textarea id="message" name="message" maxlength="2000" placeholder="Optional message..." ></textarea>
+    <textarea id="message" name="message" maxlength="2000" placeholder="Optional message..."></textarea>
 
     <button id="send-button" type="submit" disabled>Send postcard</button>
   </form>
@@ -52,7 +50,6 @@
   <div id="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js"></script>
   <script src="config.js"></script>
 
   <script>
@@ -63,29 +60,28 @@
     const form = document.getElementById('message-form');
     const status = document.getElementById('status');
     const videoPreview = document.getElementById('video-preview');
-    const gifPreview = document.getElementById('gif-preview');
     const recordButton = document.getElementById('record-button');
     const retakeButton = document.getElementById('retake-button');
     const sendButton = document.getElementById('send-button');
     const timer = document.getElementById('timer');
 
     const MAX_RECORDING_MS = 5_000;
-    const GIF_WIDTH = 320;
-    const GIF_HEIGHT = 240;
-    const GIF_FPS = 8;
-    const FRAME_DELAY = 1000 / GIF_FPS;
-    const GIF_WORKER_URL = 'https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js';
+    const POSTER_WIDTH = 640;
+    const POSTER_HEIGHT = 480;
+    const MAX_VIDEO_BYTES = 2 * 1024 * 1024;
 
     let cameraStream = null;
     let mediaRecorder = null;
     let recordedChunks = [];
     let recordedBlob = null;
-    let gifBlob = null;
-    let stopTimeout = null;
+    let posterBlob = null;
+    let recordingStopTimeout = null;
     let timerInterval = null;
     let recordingStartedAt = 0;
+    let previewUrl = null;
 
     function updateTimer() {
+      if (!recordingStartedAt) return;
       const elapsed = Date.now() - recordingStartedAt;
       const remaining = Math.max(0, MAX_RECORDING_MS - elapsed);
       timer.textContent = `Recording: ${(remaining / 1000).toFixed(1)} seconds remaining`;
@@ -97,9 +93,8 @@
 
     async function getCamera() {
       if (cameraStream) return cameraStream;
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('This browser does not support camera access.');
-      }
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser does not support camera access.');
+
       cameraStream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 640, max: 640 },
@@ -108,6 +103,7 @@
         },
         audio: false
       });
+
       videoPreview.srcObject = cameraStream;
       videoPreview.muted = true;
       videoPreview.controls = false;
@@ -117,85 +113,65 @@
 
     function recorderOptions() {
       const candidates = [
-        'video/webm;codecs=vp8,opus',
-        'video/webm;codecs=vp9,opus',
-        'video/webm',
-        'video/mp4'
+        'video/mp4;codecs="avc1.42E01E"',
+        'video/mp4',
+        'video/webm;codecs=vp8',
+        'video/webm'
       ];
       const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type));
       return mimeType ? { mimeType, videoBitsPerSecond: 750_000 } : { videoBitsPerSecond: 750_000 };
     }
 
-    async function convertVideoToGif(blob) {
-      status.textContent = 'Converting recording to GIF...';
+    async function makePoster(blob) {
       const sourceUrl = URL.createObjectURL(blob);
       const sourceVideo = document.createElement('video');
       sourceVideo.src = sourceUrl;
       sourceVideo.muted = true;
       sourceVideo.playsInline = true;
+      sourceVideo.preload = 'auto';
       await new Promise((resolve, reject) => {
         sourceVideo.onloadedmetadata = resolve;
-        sourceVideo.onerror = () => reject(new Error('Could not prepare the recording for GIF conversion.'));
+        sourceVideo.onerror = () => reject(new Error('Could not prepare the recording.'));
       });
 
-      const duration = Math.min(sourceVideo.duration || 10, MAX_RECORDING_MS / 1000);
+      const seekTime = Math.min(0.1, Math.max(0, (sourceVideo.duration || 0) - 0.05));
+      await new Promise((resolve, reject) => {
+        const onSeeked = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error('Could not read the video frame.')); };
+        const cleanup = () => {
+          sourceVideo.removeEventListener('seeked', onSeeked);
+          sourceVideo.removeEventListener('error', onError);
+        };
+        sourceVideo.addEventListener('seeked', onSeeked, { once: true });
+        sourceVideo.addEventListener('error', onError, { once: true });
+        sourceVideo.currentTime = seekTime;
+      });
+
       const canvas = document.createElement('canvas');
-      canvas.width = GIF_WIDTH;
-      canvas.height = GIF_HEIGHT;
-      const ctx = canvas.getContext('2d', { alpha: false });
-      if (!ctx) throw new Error('Could not create a GIF canvas.');
+      canvas.width = POSTER_WIDTH;
+      canvas.height = POSTER_HEIGHT;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Could not create postcard preview.');
 
-      const gif = new GIF({
-        workers: 2,
-        quality: 15,
-        width: GIF_WIDTH,
-        height: GIF_HEIGHT,
-        workerScript: GIF_WORKER_URL
-      });
-
-      const frameCount = Math.max(1, Math.ceil(duration * GIF_FPS));
-      for (let i = 0; i < frameCount; i++) {
-        const targetTime = Math.min(i / GIF_FPS, Math.max(0, duration - 0.001));
-        await new Promise((resolve, reject) => {
-          const onSeeked = () => { cleanup(); resolve(); };
-          const onError = () => { cleanup(); reject(new Error('Could not read a video frame.')); };
-          const cleanup = () => {
-            sourceVideo.removeEventListener('seeked', onSeeked);
-            sourceVideo.removeEventListener('error', onError);
-          };
-          sourceVideo.addEventListener('seeked', onSeeked, { once: true });
-          sourceVideo.addEventListener('error', onError, { once: true });
-          sourceVideo.currentTime = targetTime;
-        });
-
-        ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, GIF_WIDTH, GIF_HEIGHT);
-        const sourceAspect = sourceVideo.videoWidth / sourceVideo.videoHeight;
-        const targetAspect = GIF_WIDTH / GIF_HEIGHT;
-        let drawWidth = GIF_WIDTH;
-        let drawHeight = GIF_HEIGHT;
-        let offsetX = 0;
-        let offsetY = 0;
-        if (sourceAspect > targetAspect) {
-          drawHeight = Math.round(GIF_WIDTH / sourceAspect);
-          offsetY = Math.round((GIF_HEIGHT - drawHeight) / 2);
-        } else {
-          drawWidth = Math.round(GIF_HEIGHT * sourceAspect);
-          offsetX = Math.round((GIF_WIDTH - drawWidth) / 2);
-        }
-        ctx.drawImage(sourceVideo, offsetX, offsetY, drawWidth, drawHeight);
-        gif.addFrame(ctx, { copy: true, delay: FRAME_DELAY });
-        timer.textContent = `Creating GIF: ${Math.round(((i + 1) / frameCount) * 100)}%`;
+      const sourceAspect = sourceVideo.videoWidth / sourceVideo.videoHeight;
+      const targetAspect = POSTER_WIDTH / POSTER_HEIGHT;
+      let drawWidth = POSTER_WIDTH, drawHeight = POSTER_HEIGHT, offsetX = 0, offsetY = 0;
+      if (sourceAspect > targetAspect) {
+        drawHeight = Math.round(POSTER_WIDTH / sourceAspect);
+        offsetY = Math.round((POSTER_HEIGHT - drawHeight) / 2);
+      } else {
+        drawWidth = Math.round(POSTER_HEIGHT * sourceAspect);
+        offsetX = Math.round((POSTER_WIDTH - drawWidth) / 2);
       }
 
-      const result = await new Promise((resolve, reject) => {
-        gif.on('finished', resolve);
-        gif.on('abort', () => reject(new Error('GIF conversion was cancelled.')));
-        gif.render();
-      });
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, POSTER_WIDTH, POSTER_HEIGHT);
+      ctx.drawImage(sourceVideo, offsetX, offsetY, drawWidth, drawHeight);
 
+      const poster = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.78));
       URL.revokeObjectURL(sourceUrl);
-      return result;
+      if (!poster) throw new Error('Could not create postcard preview.');
+      return poster;
     }
 
     recordButton.addEventListener('click', async () => {
@@ -206,11 +182,10 @@
 
       try {
         if (!window.MediaRecorder) throw new Error('This browser does not support in-browser recording.');
-
         const stream = await getCamera();
         recordedChunks = [];
         recordedBlob = null;
-        gifBlob = null;
+        posterBlob = null;
         sendButton.disabled = true;
         retakeButton.disabled = true;
         mediaRecorder = new MediaRecorder(stream, recorderOptions());
@@ -220,91 +195,94 @@
         });
 
         mediaRecorder.addEventListener('stop', async () => {
-          clearTimeout(stopTimeout);
+          clearTimeout(recordingStopTimeout);
           clearInterval(timerInterval);
-          recordedBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
-
+          recordingStartedAt = 0;
+          recordButton.disabled = true;
           try {
-            gifBlob = await convertVideoToGif(recordedBlob);
-            videoPreview.pause();
+            recordedBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/mp4' });
+            if (recordedBlob.size > MAX_VIDEO_BYTES) throw new Error(`Recording is ${(recordedBlob.size / 1024 / 1024).toFixed(2)} MB. Maximum is 2 MB.`);
+            posterBlob = await makePoster(recordedBlob);
+
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            previewUrl = URL.createObjectURL(recordedBlob);
             videoPreview.srcObject = null;
-            videoPreview.classList.add('hidden');
-            gifPreview.src = URL.createObjectURL(gifBlob);
-            gifPreview.classList.remove('hidden');
-            recordButton.disabled = true;
+            videoPreview.src = previewUrl;
+            videoPreview.muted = false;
+            videoPreview.controls = true;
+            videoPreview.loop = true;
+            await videoPreview.play().catch(() => {});
+
             retakeButton.disabled = false;
             sendButton.disabled = false;
-            timer.textContent = `GIF ready: ${(gifBlob.size / 1024 / 1024).toFixed(2)} MB. Maximum length: ${MAX_RECORDING_MS / 1000} seconds.`;
+            timer.textContent = `Ready: ${(recordedBlob.size / 1024 / 1024).toFixed(2)} MB. Maximum length: 5 seconds.`;
           } catch (error) {
             console.error(error);
-            status.textContent = `GIF conversion error: ${error.message}`;
+            status.textContent = `Recording error: ${error.message}`;
             recordButton.disabled = false;
             retakeButton.disabled = false;
           }
-        });
+        }, { once: true });
 
         mediaRecorder.start(250);
         recordingStartedAt = Date.now();
         recordButton.textContent = 'Stop recording';
-        timer.textContent = `Recording: ${(MAX_RECORDING_MS / 1000).toFixed(1)} seconds remaining`;
+        timer.textContent = 'Recording: 5.0 seconds remaining';
         timerInterval = setInterval(updateTimer, 100);
-        stopTimeout = setTimeout(stopRecording, MAX_RECORDING_MS);
+        recordingStopTimeout = setTimeout(stopRecording, MAX_RECORDING_MS);
       } catch (error) {
         console.error(error);
         status.textContent = `Camera error: ${error.message}`;
       }
     });
 
-    retakeButton.addEventListener('click', () => {
-      if (videoPreview.src) URL.revokeObjectURL(videoPreview.src);
-      if (gifPreview.src) URL.revokeObjectURL(gifPreview.src);
-      gifPreview.removeAttribute('src');
-      gifPreview.classList.add('hidden');
-      videoPreview.classList.remove('hidden');
+    retakeButton.addEventListener('click', async () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
       videoPreview.removeAttribute('src');
       videoPreview.srcObject = null;
       recordedBlob = null;
-      gifBlob = null;
+      posterBlob = null;
       retakeButton.disabled = true;
+      sendButton.disabled = true;
       recordButton.disabled = false;
       recordButton.textContent = 'Start recording';
-      sendButton.disabled = true;
-      timer.textContent = `Maximum recording: ${MAX_RECORDING_MS / 1000} seconds`;
+      timer.textContent = 'Maximum recording: 5 seconds';
       status.textContent = '';
       cameraStream?.getTracks().forEach(track => track.stop());
       cameraStream = null;
-      location.reload();
+      await getCamera().catch(error => {
+        console.error(error);
+        status.textContent = `Camera error: ${error.message}`;
+      });
     });
 
-    async function uploadGifAndSend() {
-      if (!gifBlob) throw new Error('Please record a postcard first.');
+    async function uploadVideoAndSend() {
+      if (!recordedBlob || !posterBlob) throw new Error('Please record a postcard first.');
 
       const payloadBase = {
         senderName: document.getElementById('sender-name').value.trim(),
         recipientEmail: document.getElementById('recipient-email').value.trim(),
-        message: document.getElementById('message').value.trim()
+        message: document.getElementById('message').value.trim(),
+        videoMimeType: recordedBlob.type,
+        videoSizeBytes: recordedBlob.size,
+        posterSizeBytes: posterBlob.size
       };
 
       status.textContent = 'Preparing secure upload...';
-      const { data: prep, error: prepError } = await supabaseClient.functions.invoke('prepare-upload', {
-        body: {
-          filename: `postcard-${Date.now()}.gif`,
-          contentType: 'image/gif',
-          sizeBytes: gifBlob.size
-        }
-      });
+      const { data: prep, error: prepError } = await supabaseClient.functions.invoke('prepare-message', { body: payloadBase });
       if (prepError) throw new Error(prepError.message || 'Could not prepare upload.');
 
       status.textContent = 'Uploading postcard...';
-      const { error: uploadError } = await supabaseClient.storage
-        .from(prep.bucket)
-        .uploadToSignedUrl(prep.path, prep.token, gifBlob, { contentType: 'image/gif' });
-      if (uploadError) throw new Error(uploadError.message || 'Could not upload postcard.');
+      const { error: videoUploadError } = await supabaseClient.storage.from(prep.bucket)
+        .uploadToSignedUrl(prep.videoPath, prep.videoToken, recordedBlob, { contentType: recordedBlob.type });
+      if (videoUploadError) throw new Error(videoUploadError.message || 'Could not upload video.');
+
+      const { error: posterUploadError } = await supabaseClient.storage.from(prep.bucket)
+        .uploadToSignedUrl(prep.posterPath, prep.posterToken, posterBlob, { contentType: 'image/jpeg' });
+      if (posterUploadError) throw new Error(posterUploadError.message || 'Could not upload postcard image.');
 
       status.textContent = 'Sending postcard...';
-      const { data, error } = await supabaseClient.functions.invoke('send-message', {
-        body: { ...payloadBase, gifPath: prep.path, gifSizeBytes: gifBlob.size }
-      });
+      const { data, error } = await supabaseClient.functions.invoke('send-message', { body: { messageId: prep.messageId } });
       if (error) throw new Error(error.message || 'Could not send postcard.');
       return data;
     }
@@ -313,7 +291,7 @@
       event.preventDefault();
       sendButton.disabled = true;
       try {
-        const data = await uploadGifAndSend();
+        const data = await uploadVideoAndSend();
         status.textContent = data?.message || 'Postcard submitted.';
       } catch (error) {
         console.error(error);
