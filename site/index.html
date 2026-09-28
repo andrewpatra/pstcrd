@@ -22,7 +22,7 @@
 </head>
 <body>
   <h1>Send a Message</h1>
-  <p>Low-fidelity video test. Record a maximum 5-second, low-resolution postcard. 3:05 Update.</p>
+  <p>Low-fidelity video test. Record a maximum 5-second, low-resolution postcard. 3:10 Update.</p>
 
   <form id="message-form">
 
@@ -270,9 +270,19 @@
         }
       });
 
-      if (prepError) {
-        throw new Error(prepError.message || prep?.error || 'Could not prepare the postcard.');
+    if (prepError) {
+      let details = prepError.message || 'Unknown error';
+
+      try {
+        if (prepError.context) {
+        const response = prepError.context;
+        const body = await response.text();
+        details += ` | ${body}`;
       }
+    } catch {}
+
+    throw new Error(`prepare-message failed: ${details}`);
+  }
 
       status.textContent = 'Uploading postcard...';
       const { error: videoUploadError } = await supabaseClient.storage
