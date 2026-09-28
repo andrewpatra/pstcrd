@@ -199,6 +199,11 @@
     }
 
     recordButton.addEventListener('click', async () => {
+      if (mediaRecorder?.state === 'recording') {
+        stopRecording();
+        return;
+      }
+
       try {
         if (!window.MediaRecorder) throw new Error('This browser does not support in-browser recording.');
 
@@ -229,27 +234,26 @@
             recordButton.disabled = true;
             retakeButton.disabled = false;
             sendButton.disabled = false;
-            timer.textContent = `GIF ready: ${(gifBlob.size / 1024 / 1024).toFixed(2)} MB. Maximum length: 10 seconds.`;
+            timer.textContent = `GIF ready: ${(gifBlob.size / 1024 / 1024).toFixed(2)} MB. Maximum length: ${MAX_RECORDING_MS / 1000} seconds.`;
           } catch (error) {
             console.error(error);
             status.textContent = `GIF conversion error: ${error.message}`;
             recordButton.disabled = false;
             retakeButton.disabled = false;
           }
-        }, { once: true });
+        });
 
         mediaRecorder.start(250);
         recordingStartedAt = Date.now();
         recordButton.textContent = 'Stop recording';
-        recordButton.onclick = stopRecording;
-        timer.textContent = 'Recording: 10.0 seconds remaining';
+        timer.textContent = `Recording: ${(MAX_RECORDING_MS / 1000).toFixed(1)} seconds remaining`;
         timerInterval = setInterval(updateTimer, 100);
         stopTimeout = setTimeout(stopRecording, MAX_RECORDING_MS);
       } catch (error) {
         console.error(error);
         status.textContent = `Camera error: ${error.message}`;
       }
-    }, { once: true });
+    });
 
     retakeButton.addEventListener('click', () => {
       if (videoPreview.src) URL.revokeObjectURL(videoPreview.src);
@@ -265,7 +269,7 @@
       recordButton.disabled = false;
       recordButton.textContent = 'Start recording';
       sendButton.disabled = true;
-      timer.textContent = 'Maximum recording: 10 seconds';
+      timer.textContent = `Maximum recording: ${MAX_RECORDING_MS / 1000} seconds`;
       status.textContent = '';
       cameraStream?.getTracks().forEach(track => track.stop());
       cameraStream = null;
