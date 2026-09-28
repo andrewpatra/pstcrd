@@ -29,13 +29,12 @@
     <section id="camera-panel">
       <h2>Video postcard</h2>
       <video id="video-preview" playsinline muted></video>
-      <img id="poster-preview" hidden alt="Postcard preview">
       <div id="recording-controls">
         <button id="record-button" type="button">Start recording</button>
         <button id="retake-button" type="button" disabled>Retake</button>
       </div>
       <p id="timer" aria-live="polite">Maximum recording: 5 seconds</p>
-      <p id="video-note">This test records a short postcard, uploads it privately, and sends it through the consent workflow.</p>
+      <p id="video-note">Record a postcard, preview it, then send it through the PSTCRD consent system.</p>
     </section>
 
     <label for="sender-name">Your name</label>
@@ -47,7 +46,7 @@
     <label for="message">Message</label>
     <textarea id="message" name="message" required maxlength="2000"></textarea>
 
-    <button type="submit">Send text test</button>
+    <button id="send-button" type="submit" disabled>Send postcard</button>
   </form>
 
   <div id="status" aria-live="polite"></div>
@@ -71,8 +70,7 @@
     const recordButton = document.getElementById('record-button');
     const retakeButton = document.getElementById('retake-button');
     const timer = document.getElementById('timer');
-    const sendButton = document.querySelector('button[type="submit"]');
-    const posterPreview = document.getElementById('poster-preview');
+    const sendButton = document.getElementById('send-button');
 
     const MAX_RECORDING_MS = 5_000;
     let cameraStream = null;
@@ -103,7 +101,7 @@
         video: {
           width: { ideal: 640, max: 640 },
           height: { ideal: 480, max: 480 },
-          facingMode: 'enviroment'
+          facingMode: 'environment'
         },
         audio: false
       });
@@ -122,108 +120,6 @@
 
     function stopRecording() {
       if (mediaRecorder?.state === 'recording') mediaRecorder.stop();
-    }
-
-    async function createPosterBlob(blob) {
-      const url = URL.createObjectURL(blob);
-      const sourceVideo = document.createElement('video');
-      sourceVideo.src = url;
-      sourceVideo.muted = true;
-      sourceVideo.playsInline = true;
-      await new Promise((resolve, reject) => {
-        sourceVideo.onloadedmetadata = resolve;
-        sourceVideo.onerror = () => reject(new Error('Could not prepare the video poster.'));
-      });
-      await new Promise((resolve, reject) => {
-        const onSeeked = () => { cleanup(); resolve(); };
-        const onError = () => { cleanup(); reject(new Error('Could not read the poster frame.')); };
-        const cleanup = () => {
-          sourceVideo.removeEventListener('seeked', onSeeked);
-          sourceVideo.removeEventListener('error', onError);
-        };
-        sourceVideo.addEventListener('seeked', onSeeked, { once: true });
-        sourceVideo.addEventListener('error', onError, { once: true });
-        sourceVideo.currentTime = 0;
-      });
-
-      const canvas = document.createElement('canvas');
-      canvas.width = 640;
-      canvas.height = 480;
-      const ctx = canvas.getContext('2d', { alpha: false });
-      if (!ctx) throw new Error('Could not create the poster image.');
-
-      const sourceAspect = sourceVideo.videoWidth / sourceVideo.videoHeight;
-      const targetAspect = canvas.width / canvas.height;
-      let drawWidth = canvas.width;
-      let drawHeight = canvas.height;
-      let offsetX = 0;
-      let offsetY = 0;
-      if (sourceAspect > targetAspect) {
-        drawHeight = Math.round(canvas.width / sourceAspect);
-        offsetY = Math.round((canvas.height - drawHeight) / 2);
-      } else {
-        drawWidth = Math.round(canvas.height * sourceAspect);
-        offsetX = Math.round((canvas.width - drawWidth) / 2);
-      }
-      ctx.fillStyle = '#111';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(sourceVideo, offsetX, offsetY, drawWidth, drawHeight);
-
-      const posterBlob = await new Promise((resolve, reject) => {
-        canvas.toBlob(result => result ? resolve(result) : reject(new Error('Could not create the poster image.')), 'image/jpeg', 0.82);
-      });
-      URL.revokeObjectURL(url);
-      return posterBlob;
-    }
-
-    async function uploadPostcardAndSend() {
-      if (!recordedBlob) throw new Error('Please record a postcard first.');
-
-      const senderName = document.getElementById('sender-name').value.trim();
-      const recipientEmail = document.getElementById('recipient-email').value.trim();
-      const message = document.getElementById('message').value.trim();
-      if (!senderName || !recipientEmail) throw new Error('Please complete the sender name and recipient email.');
-
-      const videoMimeType = recordedBlob.type || 'video/webm';
-      status.textContent = 'Creating postcard preview...';
-      const posterBlob = await createPosterBlob(recordedBlob);
-      if (posterBlob.size <= 0) throw new Error('Could not create postcard preview.');
-      if (recordedBlob.size > 2 * 1024 * 1024) throw new Error('The recorded video is larger than the 2 MB upload limit.');
-      if (posterBlob.size > 2 * 1024 * 1024) throw new Error('The postcard preview is larger than the 2 MB upload limit.');
-
-      status.textContent = 'Preparing secure upload...';
-      const { data: prep, error: prepError } = await supabaseClient.functions.invoke('prepare-message', {
-        body: {
-          senderName,
-          recipientEmail,
-          message,
-          videoMimeType,
-          videoSizeBytes: recordedBlob.size,
-          posterSizeBytes: posterBlob.size
-        }
-      });
-      if (prepError || !prep?.messageId) {
-        throw new Error(prepError?.message || prep?.error || 'Could not prepare the postcard.');
-      }
-
-      status.textContent = 'Uploading postcard...';
-      const { error: videoUploadError } = await supabaseClient.storage
-        .from(prep.bucket)
-        .uploadToSignedUrl(prep.videoPath, prep.videoToken, recordedBlob, { contentType: videoMimeType });
-      if (videoUploadError) throw new Error(videoUploadError.message || 'Could not upload the video.');
-
-      const { error: posterUploadError } = await supabaseClient.storage
-        .from(prep.bucket)
-        .uploadToSignedUrl(prep.posterPath, prep.posterToken, posterBlob, { contentType: 'image/jpeg' });
-      if (posterUploadError) throw new Error(posterUploadError.message || 'Could not upload the postcard preview.');
-
-      status.textContent = 'Sending postcard...';
-      const { data, error } = await supabaseClient.functions.invoke('send-message', {
-        body: { messageId: prep.messageId }
-      });
-      if (error) throw new Error(error.message || 'Could not send the postcard.');
-      if (data?.error) throw new Error(data.error);
-      return data;
     }
 
     recordButton.addEventListener('click', async () => {
@@ -266,6 +162,7 @@
           recordButton.disabled = true;
           recordButton.textContent = 'Recording complete';
           retakeButton.disabled = false;
+          sendButton.disabled = false;
           timer.textContent = `Recorded ${(recordedBlob.size / 1024 / 1024).toFixed(2)} MB. Maximum length: 5 seconds.`;
         });
 
@@ -282,6 +179,60 @@
       }
     });
 
+    async function createPosterBlob(videoBlob) {
+      const sourceUrl = URL.createObjectURL(videoBlob);
+      const sourceVideo = document.createElement('video');
+      sourceVideo.src = sourceUrl;
+      sourceVideo.muted = true;
+      sourceVideo.playsInline = true;
+      sourceVideo.preload = 'metadata';
+
+      await new Promise((resolve, reject) => {
+        sourceVideo.onloadedmetadata = resolve;
+        sourceVideo.onerror = () => reject(new Error('Could not prepare the video poster.'));
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Could not create the poster image.');
+
+      await new Promise((resolve, reject) => {
+        const onSeeked = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error('Could not read the video frame.')); };
+        const cleanup = () => {
+          sourceVideo.removeEventListener('seeked', onSeeked);
+          sourceVideo.removeEventListener('error', onError);
+        };
+        sourceVideo.addEventListener('seeked', onSeeked, { once: true });
+        sourceVideo.addEventListener('error', onError, { once: true });
+        sourceVideo.currentTime = 0;
+      });
+
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const sourceAspect = sourceVideo.videoWidth / sourceVideo.videoHeight;
+      const targetAspect = canvas.width / canvas.height;
+      let drawWidth = canvas.width;
+      let drawHeight = canvas.height;
+      let offsetX = 0;
+      let offsetY = 0;
+      if (sourceAspect > targetAspect) {
+        drawHeight = Math.round(canvas.width / sourceAspect);
+        offsetY = Math.round((canvas.height - drawHeight) / 2);
+      } else {
+        drawWidth = Math.round(canvas.height * sourceAspect);
+        offsetX = Math.round((canvas.width - drawWidth) / 2);
+      }
+      ctx.drawImage(sourceVideo, offsetX, offsetY, drawWidth, drawHeight);
+
+      URL.revokeObjectURL(sourceUrl);
+      return await new Promise((resolve, reject) => {
+        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Could not create the poster image.')), 'image/jpeg', 0.82);
+      });
+    }
+
     retakeButton.addEventListener('click', () => {
       if (videoPreview.src) URL.revokeObjectURL(videoPreview.src);
       videoPreview.pause();
@@ -292,20 +243,66 @@
       retakeButton.disabled = true;
       recordButton.disabled = false;
       recordButton.textContent = 'Start recording';
-      timer.textContent = 'Maximum recording: 5 seconds';
-      posterPreview.hidden = true;
-      posterPreview.removeAttribute('src');
       sendButton.disabled = true;
+      timer.textContent = 'Maximum recording: 5 seconds';
       status.textContent = '';
     });
 
+    async function uploadPostcardAndSend() {
+      if (!recordedBlob) throw new Error('Please record a postcard first.');
+
+      const senderName = document.getElementById('sender-name').value.trim();
+      const recipientEmail = document.getElementById('recipient-email').value.trim();
+      const message = document.getElementById('message').value.trim();
+      const videoMimeType = recordedBlob.type || mediaRecorder?.mimeType || 'video/webm';
+
+      status.textContent = 'Preparing secure upload...';
+      const posterBlob = await createPosterBlob(recordedBlob);
+
+      const { data: prep, error: prepError } = await supabaseClient.functions.invoke('prepare-message', {
+        body: {
+          senderName,
+          recipientEmail,
+          message,
+          videoMimeType,
+          videoSizeBytes: recordedBlob.size,
+          posterSizeBytes: posterBlob.size
+        }
+      });
+
+      if (prepError) {
+        throw new Error(prepError.message || prep?.error || 'Could not prepare the postcard.');
+      }
+
+      status.textContent = 'Uploading postcard...';
+      const { error: videoUploadError } = await supabaseClient.storage
+        .from(prep.bucket)
+        .uploadToSignedUrl(prep.videoPath, prep.videoToken, recordedBlob, { contentType: videoMimeType });
+      if (videoUploadError) {
+        throw new Error(videoUploadError.message || 'Could not upload the video.');
+      }
+
+      const { error: posterUploadError } = await supabaseClient.storage
+        .from(prep.bucket)
+        .uploadToSignedUrl(prep.posterPath, prep.posterToken, posterBlob, { contentType: 'image/jpeg' });
+      if (posterUploadError) {
+        throw new Error(posterUploadError.message || 'Could not upload the postcard image.');
+      }
+
+      status.textContent = 'Sending postcard...';
+      const { data, error } = await supabaseClient.functions.invoke('send-message', {
+        body: { messageId: prep.messageId }
+      });
+
+      if (error) {
+        throw new Error(error.message || data?.error || 'Could not send the postcard.');
+      }
+
+      return data;
+    }
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (!recordedBlob) {
-        status.textContent = 'Please record a postcard before sending.';
-        return;
-      }
-      status.textContent = 'Sending...';
       sendButton.disabled = true;
       try {
         const data = await uploadPostcardAndSend();
@@ -317,7 +314,6 @@
         sendButton.disabled = false;
       }
     });
-
   </script>
 </body>
 </html>
