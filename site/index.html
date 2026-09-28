@@ -22,7 +22,7 @@
 </head>
 <body>
   <h1>PSTCRD</h1>
-  <p>Record a maximum 10-second postcard. This test converts the recording to an animated GIF before sending.</p>
+  <p>Record a maximum 5-second postcard. This test converts the recording to an animated GIF before sending.</p>
 
   <form id="message-form">
     <section id="camera-panel">
@@ -33,7 +33,7 @@
         <button id="record-button" type="button">Start recording</button>
         <button id="retake-button" type="button" disabled>Retake</button>
       </div>
-      <p id="timer" aria-live="polite">Maximum recording: 10 seconds</p>
+      <p id="timer" aria-live="polite">Maximum recording: 5 seconds</p>
       <p id="gif-note">GIF target: 320×240, 8 frames/second, no audio.</p>
     </section>
 
@@ -69,7 +69,7 @@
     const sendButton = document.getElementById('send-button');
     const timer = document.getElementById('timer');
 
-    const MAX_RECORDING_MS = 10_000;
+    const MAX_RECORDING_MS = 5_000;
     const GIF_WIDTH = 320;
     const GIF_HEIGHT = 240;
     const GIF_FPS = 8;
