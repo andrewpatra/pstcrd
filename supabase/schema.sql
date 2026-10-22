@@ -73,3 +73,17 @@ on conflict (id) do update set
   public = false,
   file_size_limit = 2097152,
   allowed_mime_types = array['video/mp4', 'video/webm', 'image/jpeg'];
+
+-- Sender-specific consent migration. Historical recipient-wide approvals are NOT migrated.
+create table if not exists public.sender_recipient_consent (
+ sender_id uuid not null references auth.users(id) on delete cascade,
+ recipient_id uuid not null references public.recipients(id) on delete cascade,
+ status text not null default 'pending' check (status in ('pending','approved','revoked')),
+ approved_at timestamptz, revoked_at timestamptz,
+ created_at timestamptz not null default now(),
+ primary key(sender_id, recipient_id)
+);
+alter table public.sender_recipient_consent enable row level security;
+alter table public.messages add column if not exists sender_id uuid references auth.users(id);
+create index if not exists messages_sender_id_idx on public.messages(sender_id);
+-- Previously submitted messages retain NULL sender_id and are not eligible for pair approval.

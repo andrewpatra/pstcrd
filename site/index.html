@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Video Message Test</title>
   <style>
-    body { font-family: sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; }
+    body { font-family: sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; background-color: #FFF0DA; }
     label { display:block; margin: 18px 0 6px; }
     input, textarea, button { width:100%; box-sizing:border-box; padding:12px; font:inherit; }
     textarea { min-height:140px; }
@@ -21,21 +21,9 @@
   </style>
 </head>
 <body>
-  <h1>Send a Message</h1>
-  <p>Low-fidelity video test. Record a maximum 5-second, low-resolution postcard. 3:05 Update.</p>
+  <h1>Send a PSTCRD</h1>
 
   <form id="message-form">
-
-    <section id="camera-panel">
-      <h2>Video postcard</h2>
-      <video id="video-preview" playsinline muted></video>
-      <div id="recording-controls">
-        <button id="record-button" type="button">Start recording</button>
-        <button id="retake-button" type="button" disabled>Retake</button>
-      </div>
-      <p id="timer" aria-live="polite">Maximum recording: 5 seconds</p>
-      <p id="video-note">Record a postcard, preview it, then send it through the PSTCRD consent system.</p>
-    </section>
 
     <label for="sender-name">Your name</label>
     <input id="sender-name" name="senderName" required maxlength="100">
@@ -45,6 +33,17 @@
     <button id="verify-button" type="button">Email me a verification link</button>
     <button id="signout-button" type="button" hidden>Use a different sender email</button>
     <p id="verify-status" aria-live="polite">Verify your email before sending a postcard.</p>
+
+    <section id="camera-panel">
+      <h2>Video postcard</h2>
+      <video id="video-preview" playsinline muted></video>
+      <div id="recording-controls">
+        <button id="record-button" type="button">Start recording</button>
+        <button id="retake-button" type="button" disabled>Retake</button>
+      </div>
+      <p id="timer" aria-live="polite">Maximum recording: 5 seconds</p>
+      <p id="video-note">Record a PSTCRD, preview it, then send it!</p>
+    </section>
 
     <label for="recipient-email">Recipient email</label>
     <input id="recipient-email" name="recipientEmail" type="email" required maxlength="254">
