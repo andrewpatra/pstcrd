@@ -1,6 +1,6 @@
 # PSTCRD.ART
 
-PSTCRD.ART (Postcard) is an art project to take content back from the algorithim. Created for ATLS 5204 - Product Development Studio taught by John Bacus at the ATLAS Institute at the Univeristy of Colorado Boulder. 
+[PSTCRD.ART](https://www.pstcrd.art) (Postcard) is an art project to take content back from the algorithim. Created for ATLS 5204 - Product Development Studio taught by John Bacus at the ATLAS Institute at the Univeristy of Colorado Boulder. 
 
 ## What is it?
 
