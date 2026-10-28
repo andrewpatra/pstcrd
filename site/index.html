@@ -5,15 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Video Message Test</title>
   <style>
-    body { font-family: sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; background-color: #FFF0DA; }
+    body { font-family: sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; background-color: #FFF0DA; text-align:center; }
     label { display:block; margin: 18px 0 6px; }
-    input, textarea, button { width:100%; box-sizing:border-box; padding:12px; font:inherit; }
+    input, textarea { width:100%; box-sizing:border-box; padding:12px; font:inherit; }
     textarea { min-height:140px; }
-    button { margin-top:20px; cursor:pointer; }
-    button:disabled { cursor:not-allowed; opacity:.55; }
+    button { display:inline-block; width:auto; box-sizing:border-box; margin-top:20px; padding:4px 0; border:0; border-radius:0; background:transparent; color:#1262B5; font:inherit; font-weight:600; text-align:center; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+    button:hover:not(:disabled) { color:#084780; }
+    button:focus-visible, a:focus-visible { outline:2px solid #1262B5; outline-offset:4px; }
+    button:disabled { color:#888; cursor:not-allowed; text-decoration:none; }
+    button[hidden] { display:none; }
+    a { color:#1262B5; text-underline-offset:3px; }
+    a:hover { color:#084780; }
     #camera-panel { margin-top:24px; }
     video { width:100%; background:#111; aspect-ratio:4/3; object-fit:cover; }
-    #recording-controls { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    #recording-controls { display:flex; flex-wrap:wrap; align-items:center; gap:24px; }
     #recording-controls button { margin-top:12px; }
     #timer { margin:10px 0 0; font-variant-numeric:tabular-nums; }
     #video-note { margin-top:8px; }
@@ -37,13 +42,13 @@
 
     <section id="camera-panel">
       <h2>Video postcard</h2>
+      <p id="video-note">Record a PSTCRD, preview it, then send it!</p>
       <video id="video-preview" playsinline muted></video>
       <div id="recording-controls">
         <button id="record-button" type="button">Start recording</button>
         <button id="retake-button" type="button" disabled>Retake</button>
       </div>
       <p id="timer" aria-live="polite">Maximum recording: 5 seconds</p>
-      <p id="video-note">Record a PSTCRD, preview it, then send it!</p>
     </section>
 
     <label for="recipient-email">Recipient email</label>
