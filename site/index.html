@@ -269,7 +269,8 @@
         };
         sourceVideo.addEventListener('seeked', onSeeked, { once: true });
         sourceVideo.addEventListener('error', onError, { once: true });
-        sourceVideo.currentTime = 0;
+        const midpoint = sourceVideo.duration / 2;
+        sourceVideo.currentTime = midpoint;;
       });
 
       ctx.fillStyle = '#111';
