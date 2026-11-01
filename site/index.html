@@ -244,56 +244,96 @@
     async function createPosterBlob(videoBlob) {
       const sourceUrl = URL.createObjectURL(videoBlob);
       const sourceVideo = document.createElement('video');
-      sourceVideo.src = sourceUrl;
       sourceVideo.muted = true;
       sourceVideo.playsInline = true;
-      sourceVideo.preload = 'metadata';
+      sourceVideo.preload = 'auto';
 
-      await new Promise((resolve, reject) => {
-        sourceVideo.onloadedmetadata = resolve;
-        sourceVideo.onerror = () => reject(new Error('Could not prepare the video poster.'));
-      });
+      try {
+        sourceVideo.src = sourceUrl;
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error('Timed out loading video for thumbnail generation.'));
+          }, 8000);
+          const onLoaded = () => { cleanup(); resolve(); };
+          const onError = () => { cleanup(); reject(new Error('Could not prepare the video poster.')); };
+          function cleanup() {
+            clearTimeout(timeout);
+            sourceVideo.removeEventListener('loadedmetadata', onLoaded);
+            sourceVideo.removeEventListener('error', onError);
+          }
+          sourceVideo.addEventListener('loadedmetadata', onLoaded);
+          sourceVideo.addEventListener('error', onError);
+          if (sourceVideo.readyState >= 1) onLoaded();
+        });
 
-      const canvas = document.createElement('canvas');
-      canvas.width = 640;
-      canvas.height = 480;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Could not create the poster image.');
+        const duration = sourceVideo.duration;
+        // Use the actual recording duration when the browser reports valid metadata.
+        const fallbackDuration = Math.min(MAX_RECORDING_MS / 1000,
+          Math.max(0.1, (Date.now() - recordingStartedAt) / 1000));
+        const effectiveDuration = Number.isFinite(duration) && duration > 0
+          ? duration : fallbackDuration;
+        const midpoint = Math.max(0, effectiveDuration / 2);
 
-      await new Promise((resolve, reject) => {
-        const onSeeked = () => { cleanup(); resolve(); };
-        const onError = () => { cleanup(); reject(new Error('Could not read the video frame.')); };
-        const cleanup = () => {
-          sourceVideo.removeEventListener('seeked', onSeeked);
-          sourceVideo.removeEventListener('error', onError);
-        };
-        sourceVideo.addEventListener('seeked', onSeeked, { once: true });
-        sourceVideo.addEventListener('error', onError, { once: true });
-        const midpoint = sourceVideo.duration / 2;
-        sourceVideo.currentTime = midpoint;;
-      });
+        console.log('Seeking postcard thumbnail to', midpoint, 'seconds');
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error('Timed out generating postcard thumbnail.'));
+          }, 5000);
+          const onSeeked = () => { cleanup(); resolve(); };
+          const onError = () => { cleanup(); reject(new Error('Could not read the video frame.')); };
+          function cleanup() {
+            clearTimeout(timeout);
+            sourceVideo.removeEventListener('seeked', onSeeked);
+            sourceVideo.removeEventListener('error', onError);
+          }
+          sourceVideo.addEventListener('seeked', onSeeked);
+          sourceVideo.addEventListener('error', onError);
+          try {
+            sourceVideo.currentTime = Math.min(midpoint, Math.max(0, effectiveDuration - 0.01));
+            if (!sourceVideo.seeking && Math.abs(sourceVideo.currentTime - midpoint) < 0.05 && sourceVideo.readyState >= 2) {
+              onSeeked();
+            }
+          } catch (error) {
+            cleanup();
+            reject(error);
+          }
+        });
 
-      ctx.fillStyle = '#111';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      const sourceAspect = sourceVideo.videoWidth / sourceVideo.videoHeight;
-      const targetAspect = canvas.width / canvas.height;
-      let drawWidth = canvas.width;
-      let drawHeight = canvas.height;
-      let offsetX = 0;
-      let offsetY = 0;
-      if (sourceAspect > targetAspect) {
-        drawHeight = Math.round(canvas.width / sourceAspect);
-        offsetY = Math.round((canvas.height - drawHeight) / 2);
-      } else {
-        drawWidth = Math.round(canvas.height * sourceAspect);
-        offsetX = Math.round((canvas.width - drawWidth) / 2);
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Could not create the poster image.');
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const sourceAspect = sourceVideo.videoWidth / sourceVideo.videoHeight;
+        const targetAspect = canvas.width / canvas.height;
+        if (!Number.isFinite(sourceAspect) || sourceAspect <= 0) {
+          throw new Error('The recording has no readable video frame.');
+        }
+        let drawWidth = canvas.width;
+        let drawHeight = canvas.height;
+        let offsetX = 0;
+        let offsetY = 0;
+        if (sourceAspect > targetAspect) {
+          drawHeight = Math.round(canvas.width / sourceAspect);
+          offsetY = Math.round((canvas.height - drawHeight) / 2);
+        } else {
+          drawWidth = Math.round(canvas.height * sourceAspect);
+          offsetX = Math.round((canvas.width - drawWidth) / 2);
+        }
+        ctx.drawImage(sourceVideo, offsetX, offsetY, drawWidth, drawHeight);
+        return await new Promise((resolve, reject) => {
+          canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Could not create the poster image.')), 'image/jpeg', 0.82);
+        });
+      } finally {
+        sourceVideo.pause();
+        sourceVideo.removeAttribute('src');
+        sourceVideo.load();
+        URL.revokeObjectURL(sourceUrl);
       }
-      ctx.drawImage(sourceVideo, offsetX, offsetY, drawWidth, drawHeight);
-
-      URL.revokeObjectURL(sourceUrl);
-      return await new Promise((resolve, reject) => {
-        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Could not create the poster image.')), 'image/jpeg', 0.82);
-      });
     }
 
     retakeButton.addEventListener('click', async () => {
@@ -321,8 +361,11 @@
       const message = document.getElementById('message').value.trim();
       const videoMimeType = (recordedBlob.type || mediaRecorder?.mimeType || 'video/webm').split(';')[0].trim().toLowerCase();
 
-      status.textContent = 'Preparing secure upload...';
+      status.textContent = 'Generating thumbnail...';
+      console.log('Starting thumbnail generation');
       const posterBlob = await createPosterBlob(recordedBlob);
+      console.log('Thumbnail generated successfully');
+      status.textContent = 'Preparing secure upload...';
 
       const { data: prep, error: prepError } = await supabaseClient.functions.invoke('prepare-message', {
         body: {
