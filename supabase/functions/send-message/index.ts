@@ -17,9 +17,9 @@ const emailFont = "'Roboto Serif', Georgia, 'Times New Roman', serif";
 
 const emailLayout = (body: string) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link href="https://fonts.googleapis.com/css2?family=Roboto+Serif:wght@400;600;700&display=swap" rel="stylesheet"></head>
-<body style="margin:0;padding:0;background:#FFF0DA;color:#222222;font-family:${emailFont};">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FFF0DA;"><tr><td align="center" style="padding:32px 16px;">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background:#FFF0DA;border:1px solid #cdbb9f;font-family:${emailFont};">
+<body style="margin:0;padding:0;background:#F3E0C4;color:#222222;font-family:${emailFont};">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#F3E0C4;"><tr><td align="center" style="padding:32px 16px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background:#F3E0C4;border:1px solid #cdbb9f;font-family:${emailFont};">
 <tr><td style="padding:32px 32px 12px;font-family:${emailFont};font-size:25px;font-weight:bold;letter-spacing:2px;">PSTCRD</td></tr>
 <tr><td style="padding:8px 32px 32px;font-family:${emailFont};font-size:16px;line-height:1.6;">${body}</td></tr>
 <tr><td style="padding:18px 32px 26px;border-top:1px solid #cdbb9f;color:#554b3e;font-family:${emailFont};font-size:13px;line-height:1.8;"><a href="${createYourOwnUrl}" style="color:#222222;text-decoration:underline;font-family:${emailFont};font-weight:600;">Create Your Own</a><div style="margin-top:8px;font-size:12px;">Sent through PSTCRD &middot; <a href="https://pstcrd.art" style="color:#554b3e;">pstcrd.art</a></div></td></tr>
@@ -39,6 +39,7 @@ Deno.serve(async (req) => {
     const base = Deno.env.get("APP_BASE_URL");
     const from = Deno.env.get("RESEND_FROM_EMAIL");
     const consentFrom = Deno.env.get("CONSENT_FROM_EMAIL") || "PSTCRD <envelope@pstcrd.art>";
+    const deliveryFrom = "PSTCRD Delivery <envelope@pstcrd.art>";
     const replyTo = Deno.env.get("RESEND_REPLY_TO_EMAIL");
     if (!url || !key || !resend || !base || !from) throw new Error("Server configuration is incomplete");
     const admin = createClient(url, key);
@@ -99,7 +100,7 @@ Deno.serve(async (req) => {
         <p style="margin:0;color:#666666;font-size:13px;">The video link is available for 3 days. If the preview doesn't appear, use the button above.</p>
       `);
       const plainText = `${senderName} sent you a video postcard through PSTCRD.\n\n${messageText ? messageText + "\n\n" : ""}Watch your postcard: ${videoUrl}\n\nThe video link is available for 3 days.\n\nCreate Your Own: ${createYourOwnUrl}\n\nPSTCRD — https://pstcrd.art`;
-      await sendEmail(recipient.email, `A postcard from ${senderName} | PSTCRD`, html, plainText);
+      await sendEmail(recipient.email, `A postcard from ${senderName} | PSTCRD`, html, plainText, deliveryFrom);
       const { error: uErr } = await admin.from("messages").update({ status: "sent", sent_at: new Date().toISOString() }).eq("id", msg.id);
       if (uErr) throw uErr;
       return json({ message: "Postcard sent." });
