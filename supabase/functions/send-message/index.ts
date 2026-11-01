@@ -1,3 +1,4 @@
+import { postcardEmail, consentRequestEmail } from "../_shared/email-template.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -12,19 +13,6 @@ const escapeHtml = (v: string) => String(v).replaceAll("&", "&amp;").replaceAll(
   .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const createYourOwnUrl = "https://www.pstcrd.art";
-const emailFont = "'Roboto Serif', Georgia, 'Times New Roman', serif";
-
-const emailLayout = (body: string) => `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link href="https://fonts.googleapis.com/css2?family=Roboto+Serif:wght@400;600;700&display=swap" rel="stylesheet"></head>
-<body style="margin:0;padding:0;background:#F3E0C4;color:#222222;font-family:${emailFont};">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#F3E0C4;"><tr><td align="center" style="padding:32px 16px;">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background:#F3E0C4;border:1px solid #cdbb9f;font-family:${emailFont};">
-<tr><td style="padding:32px 32px 12px;font-family:${emailFont};font-size:25px;font-weight:bold;letter-spacing:2px;">PSTCRD</td></tr>
-<tr><td style="padding:8px 32px 32px;font-family:${emailFont};font-size:16px;line-height:1.6;">${body}</td></tr>
-<tr><td style="padding:18px 32px 26px;border-top:1px solid #cdbb9f;color:#554b3e;font-family:${emailFont};font-size:13px;line-height:1.8;"><a href="${createYourOwnUrl}" style="color:#222222;text-decoration:underline;font-family:${emailFont};font-weight:600;">Create Your Own</a><div style="margin-top:8px;font-size:12px;">Sent through PSTCRD &middot; <a href="https://pstcrd.art" style="color:#554b3e;">pstcrd.art</a></div></td></tr>
-</table></td></tr></table></body></html>`;
-const primaryLink = (url: string, label: string) => `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;"><tr><td bgcolor="#222222" style="padding:13px 20px;"><a href="${escapeHtml(url)}" style="color:#ffffff;text-decoration:none;font-family:${emailFont};font-size:15px;font-weight:bold;display:inline-block;">${escapeHtml(label)}</a></td></tr></table>`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -85,25 +73,30 @@ Deno.serve(async (req) => {
     const formattedMessage = escapeHtml(messageText).replaceAll(/\r?\n/g, "<br>");
     const videoType = escapeHtml(String(msg.video_mime_type || "video/mp4"));
 
-    if (recipient.consent_status === "approved") {
-      const { data: v, error: ve2 } = await admin.storage.from("videos").createSignedUrl(msg.video_path, 60 * 60 * 24 * 3);
+    // The sender identity must be verified on BOTH upload preparation and finalization.
+    const jwt = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+    if (!jwt) return json({error: "Sender authentication required"}, 401);
+    const {data: auth, error: authError} = await admin.auth.getUser(jwt);
+    if (authError || !auth.user?.email_confirmed_at || !auth.user.email) return json({error: "Verified sender required"}, 401);
+    if (!msg.sender_id || msg.sender_id !== auth.user.id) return json({error: "This postcard belongs to another sender"}, 403);
+    const {data: pairConsent, error: pairError} = await admin.from("sender_recipient_consent")
+      .select("status").eq("sender_id", msg.sender_id).eq("recipient_id", recipient.id).maybeSingle();
+    if (pairError) throw pairError;
+    if (pairConsent?.status === "revoked") return json({error: "This recipient has stopped requests from this sender"}, 403);
+    if (pairConsent?.status === "approved") {
+      const {data: v, error: ve2} = await admin.storage.from("videos").createSignedUrl(msg.video_path, 60*60*24*3);
       if (ve2) throw ve2;
-      const { data: p, error: pe2 } = await admin.storage.from("videos").createSignedUrl(msg.poster_path, 60 * 60 * 24 * 3);
+      const {data: p, error: pe2} = await admin.storage.from("videos").createSignedUrl(msg.poster_path, 60*60*24*3);
       if (pe2) throw pe2;
-      const videoUrl = v.signedUrl;
-      const posterUrl = p.signedUrl;
-      const html = emailLayout(`
-        <p style="margin:0 0 18px;"><strong>${sender}</strong> sent you a video postcard.</p>
-        ${messageText ? `<p style="margin:0 0 22px;white-space:normal;">${formattedMessage}</p>` : ""}
-        <a href="${escapeHtml(videoUrl)}" style="display:block;text-decoration:none;"><img src="${escapeHtml(posterUrl)}" alt="Preview of your video postcard" width="536" style="display:block;width:100%;max-width:536px;height:auto;border:0;background:#eeeeee;"></a>
-        ${primaryLink(videoUrl, "Watch your postcard")}
-        <p style="margin:0;color:#666666;font-size:13px;">The video link is available for 3 days. If the preview doesn't appear, use the button above.</p>
-      `);
-      const plainText = `${senderName} sent you a video postcard through PSTCRD.\n\n${messageText ? messageText + "\n\n" : ""}Watch your postcard: ${videoUrl}\n\nThe video link is available for 3 days.\n\nCreate Your Own: ${createYourOwnUrl}\n\nPSTCRD — https://pstcrd.art`;
-      await sendEmail(recipient.email, `A postcard from ${senderName} | PSTCRD`, html, plainText, deliveryFrom);
-      const { error: uErr } = await admin.from("messages").update({ status: "sent", sent_at: new Date().toISOString() }).eq("id", msg.id);
+      const content = postcardEmail({senderName, messageText, videoUrl:v.signedUrl, posterUrl:p.signedUrl, videoMimeType:String(msg.video_mime_type || "video/mp4")});
+      await sendEmail(recipient.email, `A postcard from ${senderName} | PSTCRD`, content.html, content.text, deliveryFrom);
+      const {error: uErr} = await admin.from("messages").update({status:"sent",sent_at:new Date().toISOString()}).eq("id",msg.id);
       if (uErr) throw uErr;
-      return json({ message: "Postcard sent." });
+      return json({message:"Postcard sent."});
+    }
+    if (!pairConsent) {
+      const {error: insertError} = await admin.from("sender_recipient_consent").insert({sender_id:msg.sender_id,recipient_id:recipient.id,status:"pending"});
+      if (insertError && insertError.code !== "23505") throw insertError;
     }
 
     const tokens: Record<string, string> = {};
@@ -116,16 +109,8 @@ Deno.serve(async (req) => {
     const accept = `${base}/consent.html?token=${encodeURIComponent(tokens.accept)}&action=accept`;
     const decline = `${base}/consent.html?token=${encodeURIComponent(tokens.decline)}&action=decline`;
     const unsubscribe = `${base}/consent.html?token=${encodeURIComponent(tokens.unsubscribe)}&action=unsubscribe`;
-    const consentHtml = emailLayout(`
-      <p style="margin:0 0 16px;"><strong>${sender}</strong> would like to send you a video postcard through PSTCRD.</p>
-      <p style="margin:0 0 16px;">You'll receive this postcard only if you choose to accept it.</p>
-      ${primaryLink(accept, "Accept this postcard")}
-      <p style="margin:0 0 12px;font-size:14px;"><a href="${escapeHtml(decline)}" style="color:#444444;">Decline this postcard</a></p>
-      <p style="margin:0 0 12px;font-size:14px;"><a href="${escapeHtml(unsubscribe)}" style="color:#666666;">Stop future postcard requests</a></p>
-      <p style="margin:20px 0 0;color:#666666;font-size:13px;">If you weren't expecting this request, you can ignore it. No postcard will be delivered unless you accept.</p>
-    `);
-    const consentText = `${senderName} would like to send you a video postcard through PSTCRD.\n\nYou'll receive this postcard only if you accept.\n\nAccept: ${accept}\n\nDecline: ${decline}\n\nStop future postcard requests: ${unsubscribe}\n\nIf you weren't expecting this request, you can ignore it. No postcard will be delivered unless you accept.\n\nCreate Your Own: ${createYourOwnUrl}\n\nPSTCRD — https://pstcrd.art`;
-    await sendEmail(recipient.email, `${senderName} wants to send you a postcard | PSTCRD`, consentHtml, consentText, consentFrom);
+    const consentContent = consentRequestEmail({senderName, senderEmail:auth.user.email, accept, decline, unsubscribe});
+    await sendEmail(recipient.email, `${senderName} wants to send you a postcard | PSTCRD`, consentContent.html, consentContent.text, consentFrom);
     const { error: uErr } = await admin.from("messages").update({ status: "pending_consent" }).eq("id", msg.id);
     if (uErr) throw uErr;
     return json({ message: "The recipient has been sent a consent request." });
